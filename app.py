@@ -1,135 +1,150 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import pdfplumber
+import re
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-st.set_page_config(page_title="Smart Data Cleaner + Charts", layout="centered")
-st.title("🧹 Smart Data Cleaner + Charts")
-st.caption("Upload CSV, Excel, or text-based PDF files to analyze, clean, and visualize data")
+st.set_page_config(page_title="Smart Schema Intelligence", layout="wide")
+st.title("🧠 Smart Schema Intelligence Engine")
 
-st.info("📄 Note: PDF support is for **text-based PDFs with tables only** (not scanned images).")
+# =========================
+# Helper Functions
+# =========================
 
-uploaded_file = st.file_uploader("📤 Upload your file", type=["csv", "xlsx", "xlsm", "pdf"])
+def normalize_column(col):
+    if col is None or str(col).strip() == "":
+        return "unnamed_column"
+    col = str(col).strip().lower()
+    col = re.sub(r"[^a-z0-9_ ]", "", col)
+    col = re.sub(r"\s+", "_", col)
+    return col
 
-df = None
 
-# -------------------------------
-# Function to clean column names
-# -------------------------------
-def clean_columns(df):
-    cols = df.columns.tolist()
-    new_cols = []
+def resolve_duplicate_columns(columns):
     seen = {}
-    for c in cols:
-        if c is None:
-            c = "Unnamed"
-        c = str(c)
-        if c in seen:
-            seen[c] += 1
-            c = f"{c}_{seen[c]}"
+    resolved = []
+    for col in columns:
+        if col not in seen:
+            seen[col] = 1
+            resolved.append(col)
         else:
-            seen[c] = 0
-        new_cols.append(c)
-    df.columns = new_cols
-    df = df.dropna(axis=1, how='all')  # drop fully empty columns
-    return df
+            seen[col] += 1
+            resolved.append(f"{col}_{seen[col]}")
+    return resolved
 
-# -------------------------------
-# File processing
-# -------------------------------
+
+def infer_column_type(series):
+    if series.dropna().empty:
+        return "empty"
+    if pd.api.types.is_numeric_dtype(series):
+        return "numeric"
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return "datetime"
+    if series.nunique() / len(series) < 0.05:
+        return "categorical"
+    return "text / mixed"
+
+
+def schema_inference(df):
+    schema = []
+    for col in df.columns:
+        schema.append({
+            "column": col,
+            "type": infer_column_type(df[col]),
+            "missing": int(df[col].isna().sum()),
+            "unique": int(df[col].nunique())
+        })
+    return pd.DataFrame(schema)
+
+# =========================
+# File Upload
+# =========================
+
+uploaded_file = st.file_uploader(
+    "📤 Upload CSV, Excel, or text-based PDF",
+    type=["csv", "xlsx", "xlsm", "pdf"]
+)
+
 if uploaded_file:
     try:
-        # CSV
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-            df = clean_columns(df)
-
-        # Excel
-        elif uploaded_file.name.endswith((".xlsx", ".xlsm")):
-            df = pd.read_excel(uploaded_file)
-            df = clean_columns(df)
-
-        # PDF
-        elif uploaded_file.name.endswith(".pdf"):
-            tables = []
+        # -------- Read file --------
+        if uploaded_file.name.endswith(".pdf"):
             with pdfplumber.open(uploaded_file) as pdf:
+                tables = []
                 for page in pdf.pages:
-                    extracted_tables = page.extract_tables()
-                    for table in extracted_tables:
-                        if table:
-                            df_table = pd.DataFrame(table[1:], columns=table[0])
-                            df_table = clean_columns(df_table)
-                            tables.append(df_table)
-            if not tables:
-                st.error("❌ No tables found in this PDF. Please upload a text-based PDF with tables.")
-                st.stop()
-            df = pd.concat(tables, ignore_index=True)
-            st.warning("⚠️ PDF tables cleaned: duplicate/missing columns renamed automatically")
+                    table = page.extract_table()
+                    if table:
+                        tables.extend(table)
+            df = pd.DataFrame(tables[1:], columns=tables[0])
 
-        # -------------------------------
-        # Dataset Overview
-        # -------------------------------
+        elif uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+
+        else:
+            df = pd.read_excel(uploaded_file)
+
+        # -------- Normalize schema --------
+        df.columns = resolve_duplicate_columns(
+            [normalize_column(c) for c in df.columns]
+        )
+
+        # -------- Overview --------
         st.subheader("📊 Dataset Overview")
-        col1, col2 = st.columns(2)
-        col1.metric("Rows", df.shape[0])
-        col2.metric("Columns", df.shape[1])
+        c1, c2 = st.columns(2)
+        c1.metric("Rows", df.shape[0])
+        c2.metric("Columns", df.shape[1])
 
-        # Data Quality Checks
-        st.subheader("🚨 Data Quality Checks")
-        missing_values = df.isnull().sum().sum()
-        duplicate_rows = df.duplicated().sum()
-        col3, col4 = st.columns(2)
-        col3.metric("Missing Values", missing_values)
-        col4.metric("Duplicate Rows", duplicate_rows)
+        # -------- Schema --------
+        st.subheader("🧠 Inferred Schema")
+        schema_df = schema_inference(df)
+        st.dataframe(schema_df, use_container_width=True)
 
-        # Raw Data Preview
-        st.subheader("🔍 Raw Data Preview")
-        st.dataframe(df)
+        # -------- Preview --------
+        st.subheader("🔍 Data Preview")
+        st.dataframe(df.head(10), use_container_width=True)
 
-        # Cleaning: drop duplicates and empty rows
-        st.subheader("✨ Cleaned Data")
-        cleaned_df = df.drop_duplicates().dropna()
-        st.dataframe(cleaned_df)
+        # =========================
+        # 📊 CUSTOM GRAPH BUILDER
+        # =========================
 
-        # Cleaning Summary
-        st.subheader("📉 Cleaning Summary")
-        col5, col6 = st.columns(2)
-        col5.metric("Rows After Cleaning", cleaned_df.shape[0])
-        col6.metric("Rows Removed", df.shape[0] - cleaned_df.shape[0])
+        st.subheader("📊 Custom Visualization")
 
-        # Download cleaned data
-        csv = cleaned_df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Cleaned Data", csv, "cleaned_data.csv", "text/csv")
+        numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+        all_cols = df.columns.tolist()
 
-        # -------------------------------
-        # Dynamic Chart Section
-        # -------------------------------
-        st.subheader("📊 Generate Custom Chart")
-        st.info("Select columns for X and Y axes to visualize relationships")
+        if len(numeric_cols) == 0:
+            st.warning("No numeric columns available for plotting.")
+        else:
+            col1, col2 = st.columns(2)
 
-        if cleaned_df.shape[1] >= 2:
-            all_columns = cleaned_df.columns.tolist()
-            numeric_columns = cleaned_df.select_dtypes(include=['float', 'int']).columns.tolist()
+            with col1:
+                x_col = st.selectbox("Select X-axis", all_cols)
 
-            x_axis = st.selectbox("Select X-axis", all_columns)
-            y_axis = st.selectbox("Select Y-axis", numeric_columns)
+            with col2:
+                y_col = st.selectbox("Select Y-axis (numeric)", numeric_cols)
 
-            chart_type = st.selectbox("Chart Type", ["Scatter", "Line", "Bar"])
+            chart_type = st.selectbox(
+                "Chart Type",
+                ["Line", "Bar", "Scatter"]
+            )
 
             if st.button("Generate Chart"):
-                fig, ax = plt.subplots(figsize=(8,5))
-                if chart_type == "Scatter":
-                    sns.scatterplot(data=cleaned_df, x=x_axis, y=y_axis, ax=ax)
-                elif chart_type == "Line":
-                    sns.lineplot(data=cleaned_df, x=x_axis, y=y_axis, ax=ax)
-                elif chart_type == "Bar":
-                    sns.barplot(data=cleaned_df, x=x_axis, y=y_axis, ax=ax)
+                fig, ax = plt.subplots()
 
-                ax.set_title(f"{chart_type} Chart of {y_axis} vs {x_axis}")
+                if chart_type == "Line":
+                    sns.lineplot(data=df, x=x_col, y=y_col, ax=ax)
+                elif chart_type == "Bar":
+                    sns.barplot(data=df, x=x_col, y=y_col, ax=ax)
+                else:
+                    sns.scatterplot(data=df, x=x_col, y=y_col, ax=ax)
+
+                ax.set_title(f"{chart_type} Chart: {y_col} vs {x_col}")
+                plt.xticks(rotation=45)
                 st.pyplot(fig)
-        else:
-            st.info("At least 2 columns are required to generate a chart.")
+
+        st.success("✅ Schema analysis and visualization ready")
 
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
