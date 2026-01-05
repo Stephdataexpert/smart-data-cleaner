@@ -1,6 +1,5 @@
-streamlit==1.52.2
-pandas==2.3.3
-numpy==2.4.0
-openpyxl==3.1.5
-plotly==5.15.0
-pdfplumber==0.9.0
+streamlit
+pandas
+openpyxl
+pdfplumber
+plotly
