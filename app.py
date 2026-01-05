@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 import pdfplumber
 import re
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly.express as px
 
 st.set_page_config(page_title="Smart Schema Intelligence", layout="wide")
 st.title("🧠 Smart Schema Intelligence Engine")
@@ -21,7 +20,6 @@ def normalize_column(col):
     col = re.sub(r"\s+", "_", col)
     return col
 
-
 def resolve_duplicate_columns(columns):
     seen = {}
     resolved = []
@@ -34,7 +32,6 @@ def resolve_duplicate_columns(columns):
             resolved.append(f"{col}_{seen[col]}")
     return resolved
 
-
 def infer_column_type(series):
     if series.dropna().empty:
         return "empty"
@@ -45,7 +42,6 @@ def infer_column_type(series):
     if series.nunique() / len(series) < 0.05:
         return "categorical"
     return "text / mixed"
-
 
 def schema_inference(df):
     schema = []
@@ -106,10 +102,10 @@ if uploaded_file:
         st.dataframe(df.head(10), use_container_width=True)
 
         # =========================
-        # 📊 CUSTOM GRAPH BUILDER
+        # 📊 CUSTOM INTERACTIVE CHART BUILDER (Plotly)
         # =========================
 
-        st.subheader("📊 Custom Visualization")
+        st.subheader("📊 Interactive Visualization")
 
         numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
         all_cols = df.columns.tolist()
@@ -118,10 +114,8 @@ if uploaded_file:
             st.warning("No numeric columns available for plotting.")
         else:
             col1, col2 = st.columns(2)
-
             with col1:
                 x_col = st.selectbox("Select X-axis", all_cols)
-
             with col2:
                 y_col = st.selectbox("Select Y-axis (numeric)", numeric_cols)
 
@@ -130,21 +124,36 @@ if uploaded_file:
                 ["Line", "Bar", "Scatter"]
             )
 
+            # Extra customization
+            st.sidebar.subheader("📐 Chart Customization")
+            title_text = st.sidebar.text_input("Chart Title", f"{y_col} vs {x_col}")
+            x_label_rotation = st.sidebar.slider("X-axis label rotation", 0, 90, 45)
+            y_label_rotation = st.sidebar.slider("Y-axis label rotation", 0, 90, 0)
+            font_size = st.sidebar.slider("Font size", 8, 24, 12)
+            width = st.sidebar.slider("Chart Width", 600, 1400, 900)
+            height = st.sidebar.slider("Chart Height", 400, 900, 500)
+
             if st.button("Generate Chart"):
-                fig, ax = plt.subplots()
-
                 if chart_type == "Line":
-                    sns.lineplot(data=df, x=x_col, y=y_col, ax=ax)
+                    fig = px.line(df, x=x_col, y=y_col, title=title_text)
                 elif chart_type == "Bar":
-                    sns.barplot(data=df, x=x_col, y=y_col, ax=ax)
+                    fig = px.bar(df, x=x_col, y=y_col, title=title_text)
                 else:
-                    sns.scatterplot(data=df, x=x_col, y=y_col, ax=ax)
+                    fig = px.scatter(df, x=x_col, y=y_col, title=title_text)
 
-                ax.set_title(f"{chart_type} Chart: {y_col} vs {x_col}")
-                plt.xticks(rotation=45)
-                st.pyplot(fig)
+                # Update layout
+                fig.update_layout(
+                    width=width,
+                    height=height,
+                    font=dict(size=font_size),
+                    xaxis=dict(tickangle=x_label_rotation),
+                    yaxis=dict(tickangle=y_label_rotation),
+                    title=dict(x=0.5)  # Center title
+                )
 
-        st.success("✅ Schema analysis and visualization ready")
+                st.plotly_chart(fig, use_container_width=True)
+
+        st.success("✅ Schema analysis and interactive visualization ready")
 
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
